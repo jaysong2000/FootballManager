@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Touchline — Football Management 2025/26</title>
+<title>Football Manager 67</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
@@ -321,14 +321,13 @@ input[type=range]:focus::-webkit-slider-thumb{box-shadow:0 0 0 3px rgba(242,193,
 
 <div id="setup">
   <div class="setup-card">
-    <div class="eyebrow" style="margin-bottom:10px">Season 2025/26 &middot; England</div>
-    <div class="setup-hero">Touch<em>line</em></div>
+    <div class="eyebrow" style="margin-bottom:10px">Football Manager &middot; England</div>
+    <div class="setup-hero">Football<em>Manager</em></div>
     <p class="dim" style="max-width:52ch;margin-bottom:24px;line-height:1.55">
-      Ninety-two English clubs, real squads, and a job that lasts exactly as long as the board's patience.
-      Pick where you want to start.</p>
+      Football Manager 67. Totally not vibe coded.</p>
 
     <div class="fld"><label>Your name</label>
-      <input id="s-name" value="" placeholder="Alex Ferguson" style="width:100%"></div>
+      <input id="s-name" value="" placeholder="Neev Ansel" style="width:100%"></div>
 
     <div class="fld"><label>Division</label>
       <select id="s-div" style="width:100%">
@@ -341,8 +340,8 @@ input[type=range]:focus::-webkit-slider-thumb{box-shadow:0 0 0 3px rgba(242,193,
 
     <div class="fld"><label>Starting point</label>
       <select id="s-mode" style="width:100%">
-        <option value="club">Take a job now — pick a club</option>
-        <option value="free">Start unemployed and find your own way in</option>
+        <option value="club">Pick a club now</option>
+        <option value="free">Start unemployed</option>
       </select></div>
 
     <div class="fld" id="s-clubfld"><label>Club</label>
@@ -353,18 +352,18 @@ input[type=range]:focus::-webkit-slider-thumb{box-shadow:0 0 0 3px rgba(242,193,
 
     <div class="fld"><label>Difficulty</label>
       <select id="s-diff" style="width:100%">
-        <option value="0.9">Forgiving — board expects little</option>
+        <option value="0.9">Forgiving</option>
         <option value="1" selected>Realistic</option>
-        <option value="1.15">Unforgiving — sack race starts now</option>
+        <option value="1.15">Strict</option>
       </select></div>
 
-    <button class="btn primary" id="s-go" style="width:100%;padding:11px" disabled>Take the job</button>
+    <button class="btn primary" id="s-go" style="width:100%;padding:11px" disabled>Begin Career</button>
   </div>
 </div>
 
 <div id="app" style="display:none">
   <header id="topbar">
-    <div class="brand">Touch<span>line</span></div>
+    <div class="brand">Football<span>Manager</span></div>
     <div class="tb-club" id="tb-club"></div>
     <div class="tb-spacer"></div>
     <div class="tb-date mono" id="tb-date"></div>
