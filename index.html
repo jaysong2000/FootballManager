@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -221,7 +220,6 @@ td.num,th.num{text-align:right;font-family:var(--mono);font-size:11.5px}
 @keyframes tin{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
 
 /* ---------- attributes ---------- */
-  /* hi */
 .attr-cols{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
 @media(max-width:900px){.attr-cols{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:700px){.attr-cols{grid-template-columns:1fr}}
@@ -634,8 +632,8 @@ const G = {
   competitions:{}, day:0, nats:[], history:[],
   jobSecurity:70, boardExpectation:'', reputation:50,
   scouting:[], shortlist:new Set(), offersIn:[], offersOut:[],
-  window:{open:true, until:null}, awards:[], nextPid:0, unread:0, rumours:[], interest:new Set(),
-  settings:{ratings:'stars', speed:2, warnLineup:true, godMode:false}, deals:[], assignments:[], lastIntake:null,
+  window:{open:true, until:null}, startSeason:2025, awards:[], nextPid:0, unread:0, rumours:[], interest:new Set(),
+  settings:{ratings:'stars', speed:2, warnLineup:true, godMode:false, noFirstWindow:false}, deals:[], assignments:[], lastIntake:null,
   unemployed:false, managerRep:30, vacancies:[], careerLog:[],
   playoffs:{}, seasonArchive:[], lastWinners:null, pendingEuroEntrants:null, retirements:[], faOffers:[], objectives:null, managerLog:[], leaderboards:[], retirements:[], faOffers:[], objectives:null, managerLog:[], leaderboards:[]
 };
@@ -732,6 +730,7 @@ function initWorld(){
     assignSquadNumbers(c); c.tactic=defaultTactic(c);
   });
   if(typeof initCareers==='function') initCareers();
+  if(typeof buildRivalries==='function') buildRivalries();
 }
 
 function assignSquadNumbers(club){
@@ -745,9 +744,71 @@ function assignSquadNumbers(club){
   });
 }
 
-function defaultTactic(club){
+
+/* =========================================================================
+   PICKING A SHAPE THAT FITS
+   Formations were assigned by a hash of the club name, so a side with three
+   fine centre-backs and no wingers might line up 4-3-3 and leave its best
+   players out. Clubs now try every shape and keep the one that gets the most
+   out of the squad they actually have.
+   ========================================================================= */
+
+/** Strength of the best eleven this club could field in a given shape. */
+function formationStrength(club, formation){
+  const slots=FORMATIONS[formation];
+  if(!slots) return 0;
+  const avail=club.squad.map(i=>G.playerById.get(i))
+    .filter(p=>p && !p.inj && !p.susp && !p.youth)
+    .sort((a,b)=>effAbility(b)-effAbility(a));
+  if(avail.length<11) return 0;
+  const used=new Set();
+  let total=0, misfits=0;
+  slots.forEach(s=>{
+    let best=null, bs=-1;
+    for(const p of avail){
+      if(used.has(p.id)) continue;
+      const f=fit(p,s[0]);
+      const sc=effAbility(p)*f + (p.pos===s[0]?4:0);
+      if(sc>bs){ bs=sc; best=p }
+    }
+    if(best){
+      used.add(best.id);
+      total+=bs;
+      if(fit(best,s[0])<0.85) misfits++;      // played out of position
+    }
+  });
+  // a shape that forces several players out of position is worth less than
+  // the raw numbers suggest
+  return total - misfits*6;
+}
+
+/** The shape that gets the most out of this squad. */
+function bestFormationFor(club){
   const forms=Object.keys(FORMATIONS);
-  const f=forms[hash(club.name+'f')%forms.length];
+  let best=forms[0], bs=-1;
+  forms.forEach(f=>{
+    const s=formationStrength(club, f);
+    if(s>bs){ bs=s; best=f }
+  });
+  return best;
+}
+
+/** Clubs revisit their shape when the squad has changed. */
+function reviewFormations(){
+  G.clubs.forEach(c=>{
+    if(c.id===G.userClub) return;            // your shape is yours to choose
+    if(!c.tactic) return;
+    const want=bestFormationFor(c);
+    if(want && want!==c.tactic.formation){
+      c.tactic.formation=want;
+      c.tactic.roles={};
+    }
+    autoPick(c, c.tactic);
+  });
+}
+
+function defaultTactic(club){
+  const f=bestFormationFor(club);
   const t={
     formation:f, mentality:3, tempo:2, width:2, press:2, dline:2,
     passing:2, crossing:1, tackling:1, timeWasting:1,
@@ -1646,7 +1707,11 @@ function startOfDay(){
   ['UCL','UEL','UECL'].forEach(advanceEuroIfDue);
 
   // transfer window
-  const inWin = (d>=new Date(G.season,5,10)&&d<=new Date(G.season,8,1)) || (d>=new Date(G.season+1,0,1)&&d<=new Date(G.season+1,1,2));
+  let inWin = (d>=new Date(G.season,5,10)&&d<=new Date(G.season,8,1)) || (d>=new Date(G.season+1,0,1)&&d<=new Date(G.season+1,1,2));
+  // optionally the very first window of a save stays shut, so you start with
+  // the squad you were given
+  if(inWin && G.settings.noFirstWindow && G.season===G.startSeason && d.getMonth()>=5 && d.getMonth()<=8)
+    inWin=false;
   if(inWin!==G.window.open){
     G.window.open=inWin;
     addNews('world','Transfer window '+(inWin?'opens':'closes'),
@@ -2039,6 +2104,7 @@ function rolloverSeason(){
   G.clubs.forEach(c=>{ trimSquad(c) });
   pruneFreeAgents();
   G.clubs.forEach(c=>{ topUpSquad(c) });
+  if(typeof reviewFormations==='function') reviewFormations();
 
   // reset season stats
   G.clubs.forEach(c=>{c.p=c.w=c.d=c.l=c.gf=c.ga=c.pts=0;c.form=[]});
@@ -2221,7 +2287,7 @@ function squadAvg(club,pos){
 }
 
 /** What a selling club will accept. */
-function askingPrice(p){
+function askingPrice(p, buyerId){
   const club=G.clubs[p.club];
   let ask=p.value;
   if(p.transferListed) ask*=0.82;
@@ -2234,6 +2300,12 @@ function askingPrice(p){
   if(p.age<=22 && p.pa-p.ca>12) ask*=1.4;
   if(p.contract.years<1) ask*=0.55;
   if(p.contract.release && p.contract.release<ask) ask=p.contract.release;
+  // a rival pays over the odds, and a fierce one is not sold to at all
+  if(buyerId!=null && typeof rivalPremium==='function'){
+    const mult=rivalPremium(p.club, buyerId);
+    if(mult===Infinity) return Infinity;
+    ask*=mult;
+  }
   return Math.max(10000, Math.round(ask/50000)*50000);
 }
 
@@ -2405,8 +2477,9 @@ function currentWindow(){
 
 /** Has this player already moved in this window? */
 function alreadyMoved(p){
-  const w=currentWindow();
-  return !!(w && p.lastMoveWindow===w);
+  // One club change a season: a move in the summer rules out the winter too,
+  // and it holds whether or not a window happens to be open.
+  return p.lastMoveSeason===G.season;
 }
 
 /** Is he free to move right now? */
@@ -2416,14 +2489,15 @@ function canMoveNow(p){ return !alreadyMoved(p) }
 function stampMove(p){
   const w=currentWindow();
   if(w) p.lastMoveWindow=w;
+  p.lastMoveSeason=G.season;
 }
 
 /** Wording for the profile and the bid screen. */
 function moveLockText(p){
   if(!alreadyMoved(p)) return null;
-  const w=currentWindow();
-  return p.name+' has already changed clubs in this '+
-    (String(w).endsWith('S')?'summer':'winter')+' window and cannot move again until the next one opens.';
+  const moved=String(p.lastMoveWindow||'').endsWith('W')?'winter':'summer';
+  return p.name+' already changed clubs in the '+moved+' window this season, '+
+    'and cannot move again until next season.';
 }
 
 function completeTransfer(p,toClubId,fee,wage,years){
@@ -2432,6 +2506,8 @@ function completeTransfer(p,toClubId,fee,wage,years){
   // A deal agreed earlier can come round after the player has already arrived
   // by another route; a club cannot buy its own player.
   if(p.club===toClubId) return false;
+  // Fierce rivals do not trade, whatever route the deal came by.
+  if(p.club>=0 && typeof rivalry==='function' && rivalry(p.club, toClubId)===2) return false;
   const from=p.club>=0?G.clubs[p.club]:null, to=G.clubs[toClubId];
   // A club that sells a first-teamer goes looking for someone comparable.
   if(from && from.id!==G.userClub && !p.youth && p.ca>=35){
@@ -2465,6 +2541,7 @@ function completeTransfer(p,toClubId,fee,wage,years){
 function doLoan(p,toClubId,wage){
   if(!p || p.club<0) return null;
   if(alreadyMoved(p)) return null;
+  if(typeof rivalry==='function' && rivalry(p.club, toClubId)===2) return null;
   const from=G.clubs[p.club], to=G.clubs[toClubId];
   if(!from||!to) return null;
   from.squad=from.squad.filter(i=>i!==p.id);
@@ -2499,13 +2576,14 @@ function fillReplacements(club){
   const lo=need.ca-9, hi=need.ca+1;
   const pool=G.players.filter(p=>
     p.pos===need.pos && p.club!==club.id && !p.loanFrom && !p.youth &&
-    canMoveNow(p) && p.ca>=lo && p.ca<=hi &&
+    canMoveNow(p) && rivalry(p.club, club.id)!==2 && p.ca>=lo && p.ca<=hi &&
     (p.club===-1 || (G.clubs[p.club] && G.clubs[p.club].id!==G.userClub)) &&
     askingPrice(p)<=club.transferBudget);
   if(!pool.length) return false;
   pool.sort((a,b)=>b.ca-a.ca);
   for(const target of pool.slice(0, 12)){
-    const fee=target.club===-1?0:Math.round(askingPrice(target)*(0.98+RND()*0.14));
+    const fee=target.club===-1?0:Math.round(askingPrice(target, club.id)*(0.98+RND()*0.14));
+    if(!isFinite(fee)) continue;
     if(fee>club.transferBudget) continue;
     const wage=Math.round(expectedWage(target,club)/100)*100;
     if(club.weeklyWages && club.weeklyWages+wage>club.wageBudget*1.25) continue;
@@ -2688,8 +2766,11 @@ function interestResponse(p){
   const from=p.club>=0?G.clubs[p.club]:null;
   const gap=us.rep-(from?from.rep:20);
   const wage=Math.round(expectedWage(p,us)/100)*100;
+  const rivNote=(typeof rivalNote==='function')?rivalNote(p.club, us.id):null;
   const step = (from && from.country==='ENG' && us.country==='ENG') ? us.div-from.div : 0;
   let mood;
+  if(rivNote){ mood=rivNote.text }
+  else
   if(step>1) mood='Dropping '+step+' divisions is a very hard sell for a player of his standing.';
   else if(step===1) mood='He would be dropping a division, which he will take some persuading over.';
   else if(step<0) mood='This would be a step up the pyramid, which counts heavily in our favour.';
@@ -3145,6 +3226,11 @@ function vEditor(){
         <div class="eyebrow">Transfer window</div>
         <select id="ed-win" style="width:100%;margin-bottom:9px"><option value="1" ${G.window.open?'selected':''}>Force open</option>
         <option value="0" ${!G.window.open?'selected':''}>Closed</option></select>
+        <div class="eyebrow">Opening transfer window</div>
+        <select id="ed-firstwin" style="width:100%;margin-bottom:9px">
+          <option value="0" ${!G.settings.noFirstWindow?'selected':''}>Open as normal</option>
+          <option value="1" ${G.settings.noFirstWindow?'selected':''}>Closed — start with the squad you inherit</option>
+        </select>
         <div class="eyebrow">God mode</div>
         <select id="ed-god" style="width:100%">
           <option value="0" ${!GOD()?'selected':''}>Off — ratings hidden as normal</option>
@@ -3212,6 +3298,7 @@ function wireEditor(){
     G.difficulty=+$('#ed-diff').value||1;
     G.window.open=$('#ed-win').value==='1';
     G.settings.godMode=$('#ed-god').value==='1';
+    const fw=$('#ed-firstwin'); if(fw) G.settings.noFirstWindow=fw.value==='1';
     const nc=+$('#ed-club').value;
     if(nc===-1){
       // step down and let the club appoint a replacement
@@ -4962,6 +5049,15 @@ function showClub(cid){
       <div class="stat"><b>${c.w}-${c.d}-${c.l}</b><span>W-D-L</span></div>
       <div class="stat"><b>${c.gf}:${c.ga}</b><span>Goals</span></div>
       <div class="stat"><b>${formHTML(c.form)}</b><span>Form</span></div></div>`:''}
+    ${(()=>{ if(typeof rivalsOf!=='function') return '';
+      const r=rivalsOf(c.id);
+      if(!r.major.length && !r.minor.length) return '';
+      return `<div class="panel" style="margin-bottom:12px"><div class="panel-b">
+        ${r.major.length?`<div class="kv"><span>Fierce rivals</span><b>${
+          r.major.map(x=>esc(x.short)).join(', ')}</b></div>`:''}
+        ${r.minor.length?`<div class="kv"><span>Other rivalries</span><b class="dim">${
+          r.minor.map(x=>esc(x.short)).join(', ')}</b></div>`:''}
+      </div></div>`; })()}
     <div class="tabs" style="margin-bottom:12px">
       <button class="tab active" data-ct="squad">Squad</button>
       <button class="tab" data-ct="honours">Honours${honours.length?' ('+honours.length+')':''}</button>
@@ -5196,6 +5292,9 @@ function submitBid(pid, fee, opts){
   if(!p) return {ok:false,msg:'No such player.'};
   if(p.club===G.userClub) return {ok:false,msg:'He already plays for you.'};
   if(alreadyMoved(p)) return {ok:false, msg: moveLockText(p)};
+  if(p.club>=0 && rivalry(p.club, G.userClub)===2)
+    return {ok:false, msg: G.clubs[p.club].name+' will not sell to us at any price. '+
+      'The rivalry between the clubs rules it out entirely.'};
   if(!G.window.open && !opts.loan) return {ok:false,msg:'The transfer window is closed.'};
   const existing = dealFor(pid);
   if(existing && existing.dir==='out' && ['awaiting_club','awaiting_player','player_deciding'].includes(existing.stage))
@@ -5272,7 +5371,14 @@ function withdrawDeal(dealId){
 function clubVerdict(d){
   const p=G.playerById.get(d.player);
   const seller=G.clubs[d.seller];
-  const ask=askingPrice(p);
+  const riv=rivalry(d.seller, d.buyer);
+  if(riv===2){
+    const buyer=G.clubs[d.buyer];
+    return {verdict:'reject',
+      reason:seller.name+' will not sell to '+(buyer?buyer.name:'us')+' at any price. '+
+             'There is far too much history between the clubs.'};
+  }
+  const ask=askingPrice(p, d.buyer);
   d.askFee=ask;
   const stance=transferStance(p);
   const ratio=d.fee/Math.max(1,ask);
@@ -5750,6 +5856,9 @@ function bidDialog(p){
     <div class="kv"><span>Club</span><b>${p.club>=0?esc(G.clubs[p.club].name):'Free agent'}</b></div>
     <div class="kv"><span>Their stance</span><b>${esc(stance.label)}</b></div>
     <div class="kv"><span>Likely asking price</span><b>${money(ask)}</b></div>
+    ${(()=>{const r=(typeof rivalNote==='function')?rivalNote(p.club, G.userClub):null;
+      return r?`<div class="kv"><span>Rivalry</span><b style="color:${r.level===2?'var(--danger)':'var(--flood)'}">${
+        r.level===2?'Will not deal with us':'Premium expected'}</b></div>`:''})()}
     ${p.contract.release?`<div class="kv"><span>Release clause</span><b>${money(p.contract.release)}</b></div>`:''}
     <div class="kv"><span>Your transfer budget</span><b>${money(us.transferBudget)}</b></div>
     ${rivals.length?`<div class="kv"><span>Also interested</span><b>${esc(rivals.slice(0,3).map(r=>r.club.short).join(', '))}</b></div>`:''}
@@ -7692,7 +7801,9 @@ function closeSpell(p){
   const s=p.spell;
   if(!s){ openSpell(p); return }
   const apps=(p.apps||0)-s.a0;
-  if(apps>0){
+  // Record the spell whether or not he ever got on the pitch — a season spent
+  // at a club is part of a career even if it produced nothing.
+  if(apps>0 || s.club>=0){
     const club=s.club>=0?G.clubs[s.club]:null;
     p.career=(p.career||[]);
     const same=p.career.find(r=>r.season===s.season && r.club===s.club && r.loan===s.loan);
@@ -8828,7 +8939,7 @@ function aiBuy(club){
   const st=positionState(club,pos);
   const pool=G.players.filter(p=>
     p.pos===pos && p.club!==club.id && !p.youth && !p.loanFrom && p.club>=0 &&
-    canMoveNow(p) &&
+    canMoveNow(p) && rivalry(p.club, club.id)!==2 &&
     G.clubs[p.club] && G.clubs[p.club].id!==G.userClub &&
     signingMakesSense(club, p, motive, std) &&
     feeJustified(club, p, askingPrice(p)) &&
@@ -8846,7 +8957,8 @@ function aiBuy(club){
   };
   pool.sort((a,b)=>score(b)-score(a));
   for(const target of pool.slice(0,14)){
-    const fee=Math.round(askingPrice(target)*(1.0+RND()*0.22));
+    const fee=Math.round(askingPrice(target, club.id)*(1.0+RND()*0.22));
+    if(!isFinite(fee)) continue;
     if(fee>club.transferBudget) continue;
     if(!ffpAllows(club, fee)) continue;
     // Marquee signings should be an event, not a routine. The bigger the fee,
@@ -9839,7 +9951,7 @@ function serialise(){
     seasonEnd:G.seasonEnd, pendingRollover:G.pendingRollover, window:G.window,
     unread:G.unread, nextPid:G.nextPid,
     // --- preferences ---
-    settings:G.settings, autoSubs:AUTO_SUBS?1:0,
+    settings:G.settings, autoSubs:AUTO_SUBS?1:0, startSeason:G.startSeason,
     // --- your career ---
     unemployed:G.unemployed, managerRep:G.managerRep,
     vacancies:G.vacancies, careerLog:G.careerLog,
@@ -9858,7 +9970,7 @@ function serialise(){
       p.apps,p.goals,p.assists,p.cleanSheets,p.ratings,p.form,p.mom,p.squadNum,
       p.training,p.personality,p.contract,p.transferListed?1:0,p.loanFrom,p.attrs,
       p.value,p.unhappy,p.caF,p.regen?1:0,p.lastClubName,p.faSeasons,p.squadRole,
-      p.loanListed?1:0,p.career,p.spell,p.lastMoveWindow]),
+      p.loanListed?1:0,p.career,p.spell,p.lastMoveWindow,p.lastMoveSeason]),
     fixtures:G.fixtures.map(f=>[f.comp,f.div,f.round,f.home,f.away,f.date.getTime(),
       f.played?1:0,f.score,f.cup?1:0,f.euro?1:0,f.koTag,f.neutral?1:0,
       f.qual?1:0,f.qualTie,f.koTie,f.leg,f.poTie]),
@@ -9888,9 +10000,11 @@ function deserialise(str){
   G.managerName=s.managerName;G.difficulty=s.difficulty;G.jobSecurity=s.jobSecurity;
   G.seasonEnd=s.seasonEnd;G.pendingRollover=s.pendingRollover;G.window=s.window;G.unread=s.unread||0;
   G.settings=Object.assign({ratings:'stars',speed:2,warnLineup:true}, s.settings||{});
+  G.startSeason=s.startSeason!=null?s.startSeason:s.season;
   AUTO_SUBS=s.autoSubs===undefined?true:!!s.autoSubs;
   MSPEED=G.settings.speed;
   G.clubs=s.clubs.map(c=>{c.crest=crestFor(c);return c});
+  if(typeof buildRivalries==='function') buildRivalries();
   G.players=[];G.playerById=new Map();
   s.players.forEach(a=>{
     const p={id:a[0],name:a[1],pos:a[2],age:a[3],nat:a[4],ca:a[5],pa:a[6],club:a[7],foot:a[8],
@@ -9899,7 +10013,7 @@ function deserialise(str){
       mom:a[24],squadNum:a[25],training:a[26],personality:a[27],contract:a[28],transferListed:!!a[29],
       loanFrom:a[30],attrs:a[31],value:a[32],unhappy:a[33]||0,caF:a[34]||0,regen:!!a[35],
       lastClubName:a[36]||null,faSeasons:a[37]||0,squadRole:a[38]||null,loanListed:!!a[39],
-      career:a[40]||[],spell:a[41]||null,lastMoveWindow:a[42]||null};
+      career:a[40]||[],spell:a[41]||null,lastMoveWindow:a[42]||null,lastMoveSeason:a[43]!=null?a[43]:null};
     G.players.push(p);G.playerById.set(p.id,p);
   });
   G.fixtures=s.fixtures.map(f=>({comp:f[0],div:f[1],round:f[2],home:f[3],away:f[4],date:new Date(f[5]),
@@ -10021,7 +10135,7 @@ function startGame(clubIdx,name,diff){
   $('#app').style.display='grid';
   initWorld();
   G.managerName=name; G.difficulty=diff;
-  G.date=new Date(2025,6,1); G.day=0; G.season=2025;
+  G.date=new Date(2025,6,1); G.day=0; G.season=2025; G.startSeason=2025;
   G.unemployed = clubIdx==null;
   G.userClub = clubIdx==null ? -1 : clubIdx;
   buildLeagueFixtures(); initEurope(); initCups();
@@ -10101,6 +10215,19 @@ window.addEventListener('DOMContentLoaded',()=>{
    top of this list.
    ========================================================================= */
 const CHANGELOG = [
+{v:42, phase:'Polish', title:'One move a season, and shapes that fit',
+ items:['A player who moves in the summer can no longer move again in the winter — one club change per season.',
+        'Editor option to close the opening transfer window, so a save can start with the squad you inherit. Only the first window is affected.',
+        'Career records now list every club a player was at, including seasons where he never got on the pitch.',
+        'AI clubs choose the formation that gets the most out of the squad they have, and revisit it each summer. Formations were previously assigned by a hash of the club name.',
+        'Fixed: the move lock leaked outside the transfer windows, letting 33 players move twice in a season.',
+        'Fixed: the lock was not being saved.']},
+{v:41, phase:'Polish', title:'Club rivalries',
+ items:['Fierce rivals will not sell to each other at any price — 59 derby pairings, from Liverpool and Everton to Norwich and Ipswich, plus the major European ones.',
+        'Lesser rivals will deal, but charge about 85% over the valuation. 66 such pairings.',
+        'AI clubs respect it too: they never shop at a fierce rival and pay the premium at a lesser one.',
+        'Rivalries shown on the club page, on the bid screen, and in the availability read-out.',
+        'Enforced inside completeTransfer and doLoan, so no route can slip past it — the first version leaked 16 derby transfers and a loan.']},
 {v:40, phase:'Polish', title:'Managers have careers, and other refinements',
  items:['Unemployment is now a job option in the editor — step down and your club appoints someone else.',
         'Past finishing positions moved off the Champions screen; they live on each club\'s own page, where you would look for them.',
@@ -10490,6 +10617,203 @@ function mgrFromRetiree(rec){
     addNews('jobs','Into management',
       rec.name+' has taken his coaching badges and is looking for a job in the lower leagues.',
       G.userClub);
+}
+
+
+/* =========================================================================
+   RIVALRIES
+   Some clubs will not sell to each other at any price, and others will only
+   do it if the money is embarrassing. A player crossing a derby divide is
+   supposed to be news, not routine business.
+   ========================================================================= */
+
+// Fierce rivalries — these clubs do not trade with each other.
+const MAJOR_RIVALRIES = [
+  ['Arsenal','Tottenham Hotspur'],
+  ['Liverpool','Everton'],
+  ['Liverpool','Manchester United'],
+  ['Manchester United','Manchester City'],
+  ['Manchester United','Leeds United'],
+  ['Newcastle United','Sunderland'],
+  ['Aston Villa','Birmingham City'],
+  ['Sheffield United','Sheffield Wednesday'],
+  ['Nottingham Forest','Derby County'],
+  ['West Ham United','Millwall'],
+  ['Portsmouth','Southampton'],
+  ['Cardiff City','Swansea City'],
+  ['Bristol City','Bristol Rovers'],
+  ['Stoke City','Port Vale'],
+  ['Blackburn Rovers','Burnley'],
+  ['Norwich City','Ipswich Town'],
+  ['Crystal Palace','Brighton & Hove Albion'],
+  ['Wolverhampton Wanderers','West Bromwich Albion'],
+  ['Luton Town','Watford'],
+  ['Bolton Wanderers','Wigan Athletic'],
+  ['Preston North End','Blackpool'],
+  ['Plymouth Argyle','Exeter City'],
+  ['Colchester United','Peterborough United'],
+  ['Bradford City','Huddersfield Town'],
+  ['Oldham Athletic','Rochdale'],
+  ['Notts County','Nottingham Forest'],
+  ['Reading','Oxford United'],
+  ['Northampton Town','Peterborough United'],
+  ['Barnsley','Doncaster Rovers'],
+  ['Charlton Athletic','Millwall'],
+  ['Leyton Orient','West Ham United'],
+  ['Grimsby Town','Lincoln City'],
+  ['Shrewsbury Town','Wrexham'],
+  ['Tranmere Rovers','Wrexham'],
+  ['Cambridge United','Peterborough United'],
+  ['Chesterfield','Mansfield Town'],
+  ['Crewe Alexandra','Port Vale'],
+  ['Gillingham','Charlton Athletic'],
+  ['Swindon Town','Oxford United'],
+  ['Cheltenham Town','Swindon Town'],
+  ['Salford City','Oldham Athletic'],
+  ['Accrington Stanley','Blackburn Rovers'],
+  ['Burton Albion','Derby County'],
+  ['Walsall','Birmingham City'],
+  // Europe
+  ['Real Madrid','Barcelona'],
+  ['Real Madrid','Atletico Madrid'],
+  ['Inter Milan','AC Milan'],
+  ['AS Roma','Lazio'],
+  ['Bayern Munich','Borussia Dortmund'],
+  ['Paris Saint-Germain','Marseille'],
+  ['Benfica','Porto'],
+  ['Benfica','Sporting CP'],
+  ['Porto','Sporting CP'],
+  ['Ajax','Feyenoord'],
+  ['Celtic','Rangers'],
+  ['Galatasaray','Fenerbahce'],
+  ['Juventus','Inter Milan'],
+  ['Atalanta','Brescia'],
+  ['Olympiacos','Panathinaikos']
+];
+
+// Lesser rivalries — business is possible, but it costs.
+const MINOR_RIVALRIES = [
+  ['Chelsea','Tottenham Hotspur'],
+  ['Chelsea','Arsenal'],
+  ['Chelsea','Fulham'],
+  ['Queens Park Rangers','Chelsea'],
+  ['Queens Park Rangers','Brentford'],
+  ['Queens Park Rangers','Fulham'],
+  ['Brentford','Fulham'],
+  ['Arsenal','West Ham United'],
+  ['Tottenham Hotspur','West Ham United'],
+  ['Leicester City','Nottingham Forest'],
+  ['Leicester City','Coventry City'],
+  ['Sunderland','Middlesbrough'],
+  ['Newcastle United','Middlesbrough'],
+  ['Leeds United','Huddersfield Town'],
+  ['Leeds United','Bradford City'],
+  ['Everton','Manchester United'],
+  ['Everton','Manchester City'],
+  ['Liverpool','Manchester City'],
+  ['Aston Villa','Wolverhampton Wanderers'],
+  ['Aston Villa','West Bromwich Albion'],
+  ['Birmingham City','West Bromwich Albion'],
+  ['Southampton','Bournemouth'],
+  ['Brighton & Hove Albion','Southampton'],
+  ['Bristol City','Cardiff City'],
+  ['Swansea City','Bristol City'],
+  ['Hull City','Leeds United'],
+  ['Stoke City','Derby County'],
+  ['Blackpool','Blackburn Rovers'],
+  ['Bolton Wanderers','Blackburn Rovers'],
+  ['Wigan Athletic','Preston North End'],
+  ['Millwall','Crystal Palace'],
+  ['Watford','Queens Park Rangers'],
+  ['Peterborough United','Milton Keynes Dons'],
+  ['Oxford United','Milton Keynes Dons'],
+  ['Exeter City','Bristol Rovers'],
+  ['Barnsley','Sheffield Wednesday'],
+  ['Rotherham United','Sheffield United'],
+  ['Mansfield Town','Notts County'],
+  ['Lincoln City','Mansfield Town'],
+  ['Bradford City','Halifax Town'],
+  ['Carlisle United','Blackpool'],
+  ['Stockport County','Oldham Athletic'],
+  ['Fleetwood Town','Blackpool'],
+  ['Wycombe Wanderers','Reading'],
+  ['Stevenage','Luton Town'],
+  ['Barnet','Leyton Orient'],
+  ['AFC Wimbledon','Milton Keynes Dons'],
+  ['Bromley','Charlton Athletic'],
+  ['Newport County','Cardiff City'],
+  ['Harrogate Town','Bradford City'],
+  ['Crawley Town','Brighton & Hove Albion'],
+  // Europe
+  ['Barcelona','Espanyol'],
+  ['Atletico Madrid','Barcelona'],
+  ['AC Milan','Juventus'],
+  ['Napoli','AS Roma'],
+  ['Napoli','Juventus'],
+  ['Borussia Dortmund','RB Leipzig'],
+  ['Bayern Munich','Bayer Leverkusen'],
+  ['Marseille','Lyon'],
+  ['Paris Saint-Germain','Monaco'],
+  ['Lyon','Saint-Etienne'],
+  ['PSV Eindhoven','Ajax'],
+  ['PSV Eindhoven','Feyenoord'],
+  ['Shakhtar Donetsk','Dynamo Kyiv'],
+  ['Club Brugge','Anderlecht'],
+  ['Red Bull Salzburg','Rapid Wien']
+];
+
+/** Built once: club id -> Map(otherId -> 2 major | 1 minor). */
+let RIVALRY=null;
+function buildRivalries(){
+  RIVALRY=new Map();
+  const byName={};
+  G.clubs.forEach(c=>{ byName[c.name]=c.id });
+  const link=(a,b,level)=>{
+    const x=byName[a], y=byName[b];
+    if(x==null||y==null) return;
+    if(!RIVALRY.has(x)) RIVALRY.set(x,new Map());
+    if(!RIVALRY.has(y)) RIVALRY.set(y,new Map());
+    // a fiercer rivalry always wins if a pair appears in both lists
+    RIVALRY.get(x).set(y, Math.max(RIVALRY.get(x).get(y)||0, level));
+    RIVALRY.get(y).set(x, Math.max(RIVALRY.get(y).get(x)||0, level));
+  };
+  MAJOR_RIVALRIES.forEach(([a,b])=>link(a,b,2));
+  MINOR_RIVALRIES.forEach(([a,b])=>link(a,b,1));
+  return RIVALRY;
+}
+
+/** 2 = fierce, 1 = lesser, 0 = no rivalry. */
+function rivalry(aId, bId){
+  if(aId==null||bId==null||aId<0||bId<0||aId===bId) return 0;
+  if(!RIVALRY) buildRivalries();
+  const m=RIVALRY.get(aId);
+  return m ? (m.get(bId)||0) : 0;
+}
+
+/** Everyone a club considers a rival, for the club page. */
+function rivalsOf(clubId){
+  if(!RIVALRY) buildRivalries();
+  const m=RIVALRY.get(clubId);
+  if(!m) return {major:[],minor:[]};
+  const out={major:[],minor:[]};
+  m.forEach((lvl,id)=>{ if(G.clubs[id]) (lvl===2?out.major:out.minor).push(G.clubs[id]) });
+  out.major.sort((a,b)=>b.rep-a.rep); out.minor.sort((a,b)=>b.rep-a.rep);
+  return out;
+}
+
+/** What a rivalry does to a fee. */
+function rivalPremium(sellerId, buyerId){
+  const r=rivalry(sellerId, buyerId);
+  if(r===2) return Infinity;          // no deal at any price
+  if(r===1) return 1.85;              // a considerable premium
+  return 1;
+}
+
+function rivalNote(sellerId, buyerId){
+  const r=rivalry(sellerId, buyerId);
+  if(r===2) return {level:2, text:'They will not sell to us under any circumstances. The rivalry runs too deep.'};
+  if(r===1) return {level:1, text:'There is history between the clubs. They will want considerably more than his valuation.'};
+  return null;
 }
 
 </script>
